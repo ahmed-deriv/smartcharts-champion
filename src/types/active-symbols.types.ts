@@ -2,12 +2,14 @@ export type TProcessedSymbolItem = {
     symbol: string;
     name: string;
     market: string;
-    market_display_name: string;
     subgroup: string;
-    subgroup_display_name: string;
-    submarket_display_name: string;
+    submarket: string;
     exchange_is_open: boolean;
     decimal_places: number;
+    displayName: string;
+    marketDisplayName: string;
+    submarketDisplayName: string;
+    subgroupDisplayName: string;
 };
 
 export type TProcessedSymbols = TProcessedSymbolItem[];

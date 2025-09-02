@@ -1,14 +1,7 @@
 import { ActiveSymbols as TActiveSymbols } from '../types/api-types';
-import { 
-    TProcessedSymbols, 
-    TProcessedSymbolItem, 
-    TCategorizedSymbols,
-} from '../types/active-symbols.types';
-import {
-    TSubCategory,
-    TSubCategoryDataItem,
-    TCategorizedSymbolItem,
-} from '../types/categorical-display.types';
+import { TProcessedSymbols, TProcessedSymbolItem, TCategorizedSymbols } from '../types/active-symbols.types';
+import { TSubCategory, TSubCategoryDataItem, TCategorizedSymbolItem } from '../types/categorical-display.types';
+import { getCachedDisplayNames } from "./displayNameUtils";
 
 // Helper function for stable sort
 export function stableSort<T>(array: T[], compareFn: (a: T, b: T) => number): T[] {
@@ -26,21 +19,32 @@ export const processSymbols = (symbols: TActiveSymbols): TProcessedSymbols => {
     const processedSymbols: TProcessedSymbols = [];
 
     // Stable sort is required to retain the order of the symbol name
-    const sortedSymbols = stableSort(symbols, (a, b) =>
-        a.submarket_display_name.localeCompare(b.submarket_display_name)
-    );
+    const sortedSymbols = stableSort(symbols, (a, b) => a.submarket.localeCompare(b.submarket));
 
     for (const s of sortedSymbols) {
-        processedSymbols.push({
-            symbol: s.symbol,
-            name: s.display_name,
+        const symbolData = s as any;
+        const symbolForDisplayName = symbolData.underlying_symbol || s.symbol;
+
+        // Get display names using the display name service
+        const displayNames = getCachedDisplayNames({
+            symbol: symbolForDisplayName,
             market: s.market,
-            market_display_name: s.market_display_name,
+            submarket: s.submarket,
             subgroup: s.subgroup,
-            subgroup_display_name: s.subgroup_display_name,
-            submarket_display_name: s.submarket_display_name,
+        });
+
+        processedSymbols.push({
+            symbol: symbolData.underlying_symbol || s.symbol,
+            name: symbolData.underlying_symbol || s.symbol,
+            market: s.market,
+            subgroup: s.subgroup,
+            submarket: s.submarket,
             exchange_is_open: !!s.exchange_is_open,
-            decimal_places: s.pip.toString().length - 2,
+            decimal_places: (symbolData.pip_size ?? s.pip).toString().length - 2,
+            displayName: displayNames.symbolDisplayName,
+            marketDisplayName: displayNames.marketDisplayName,
+            submarketDisplayName: displayNames.submarketDisplayName,
+            subgroupDisplayName: displayNames.subgroupDisplayName,
         });
     }
 
@@ -50,14 +54,14 @@ export const processSymbols = (symbols: TActiveSymbols): TProcessedSymbols => {
 export const categorizeActiveSymbols = (activeSymbols: TProcessedSymbols): TCategorizedSymbols => {
     const categorizedSymbols: TCategorizedSymbols = [];
     if (!activeSymbols.length) return categorizedSymbols;
-    
+
     const first = activeSymbols[0];
     const getSubcategory = (d: TProcessedSymbolItem): TSubCategory => ({
-        subcategoryName: d.submarket_display_name,
+        subcategoryName: d.submarketDisplayName,
         data: [],
     });
     const getCategory = (d: TProcessedSymbolItem): TCategorizedSymbolItem<TSubCategoryDataItem> => ({
-        categoryName: d.market_display_name,
+        categoryName: d.marketDisplayName,
         categoryId: d.market,
         hasSubcategory: true,
         hasSubgroup: !!(d.subgroup && d.subgroup !== 'none'),
@@ -68,8 +72,8 @@ export const categorizeActiveSymbols = (activeSymbols: TProcessedSymbols): TCate
     let category = getCategory(first);
     for (const symbol of activeSymbols) {
         if (
-            category.categoryName !== symbol.market_display_name &&
-            category.categoryName !== symbol.subgroup_display_name
+            category.categoryName !== symbol.marketDisplayName &&
+            category.categoryName !== symbol.subgroupDisplayName
         ) {
             category.data.push(subcategory as unknown as TSubCategoryDataItem);
             categorizedSymbols.push(category);
@@ -81,7 +85,7 @@ export const categorizeActiveSymbols = (activeSymbols: TProcessedSymbols): TCate
             if (!category.subgroups?.some((el: TCategorizedSymbolItem) => el.categoryId === symbol.subgroup)) {
                 category.subgroups?.push({
                     data: [],
-                    categoryName: symbol.subgroup_display_name,
+                    categoryName: symbol.subgroupDisplayName,
                     categoryId: symbol.subgroup,
                     hasSubcategory: true,
                     hasSubgroup: false,
@@ -92,7 +96,7 @@ export const categorizeActiveSymbols = (activeSymbols: TProcessedSymbols): TCate
             if (
                 !category.subgroups
                     ?.find((el: TCategorizedSymbolItem) => el.categoryId === symbol.subgroup)
-                    ?.data.find((el: TSubCategory) => el.subcategoryName === symbol.submarket_display_name)
+                    ?.data.find((el: TSubCategory) => el.subcategoryName === symbol.submarketDisplayName)
             ) {
                 subcategory = getSubcategory(symbol);
                 category.subgroups
@@ -102,7 +106,7 @@ export const categorizeActiveSymbols = (activeSymbols: TProcessedSymbols): TCate
             }
             category.subgroups
                 ?.find((el: TCategorizedSymbolItem) => el.categoryId === symbol.subgroup)
-                ?.data.find((el: TSubCategory) => el.subcategoryName === symbol.submarket_display_name)
+                ?.data.find((el: TSubCategory) => el.subcategoryName === symbol.submarketDisplayName)
                 ?.data.push({
                     enabled: true,
                     itemId: symbol.symbol,
@@ -110,7 +114,7 @@ export const categorizeActiveSymbols = (activeSymbols: TProcessedSymbols): TCate
                     dataObject: symbol,
                 });
         }
-        if (subcategory.subcategoryName !== symbol.submarket_display_name) {
+        if (subcategory.subcategoryName !== symbol.submarketDisplayName) {
             category.data.push(subcategory as unknown as TSubCategoryDataItem);
             subcategory = getSubcategory(symbol);
         }
