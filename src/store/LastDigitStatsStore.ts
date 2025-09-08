@@ -1,4 +1,4 @@
-import { TGetQuotesRequest, TickSpotData } from 'src/types/api-types';
+import { TickSpotData } from 'src/types/api-types';
 import { action, computed, observable, when, makeObservable } from 'mobx';
 import Context from 'src/components/ui/Context';
 import MainStore from '.';
@@ -50,8 +50,8 @@ export default class LastDigitStatsStore {
     latestData: number[] = [];
     lastSymbol = '';
 
-    get api() {
-        return this.mainStore.chart.api;
+    get getQuotes() {
+        return this.mainStore.state.getQuotes;
     }
     get decimalPlaces() {
         return this.mainStore.chart.currentActiveSymbol?.decimal_places || 2;
@@ -78,10 +78,11 @@ export default class LastDigitStatsStore {
 
         const quotes =
             response ||
-            (await this.api?.getQuotes({
+            (await this.getQuotes?.({
                 symbol: this.mainStore.chart.currentActiveSymbol.symbol,
                 count: this.count,
-            } as TGetQuotesRequest));
+                granularity: 0, // Use tick data for last digit stats
+            }));
         this.latestData = quotes?.history?.prices ? quotes.history.prices : [];
 
         if (!this.context || !this.mainStore.chart.currentActiveSymbol) return;

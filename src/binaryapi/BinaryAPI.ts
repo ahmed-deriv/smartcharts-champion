@@ -81,9 +81,8 @@ export default class BinaryAPI {
     forget(params: { symbol: string; granularity: TGranularity }) {
         const key = this._getKey(params as TGetQuotesRequest);
         if (!this.streamRequests[key]) return;
-        const { request, callback } = this.streamRequests[key];
         delete this.streamRequests[key];
-        return this.unsubscribeQuotes(request, callback);
+        return this.unsubscribeQuotes({ symbol: params.symbol, granularity: params.granularity });
     }
     static createGetQuotesRequest({
         symbol,

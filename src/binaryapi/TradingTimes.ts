@@ -10,7 +10,7 @@ type TTradingTimesParam = {
     tradingTimes?: Record<string, { isOpen: boolean; openTime: string; closeTime: string }>;
 };
 class TradingTimes {
-    _api: BinaryAPI;
+    _api: BinaryAPI | null;
     _emitter: EventEmitter;
     _params: TTradingTimesParam;
     _serverTime: ServerTime;
@@ -27,10 +27,10 @@ class TradingTimes {
     isInitialized = false;
     tradingTimesPromise = PendingPromise<void, void>();
     timeUpdateCallback?: () => void;
-    constructor(api: BinaryAPI, params?: TTradingTimesParam) {
+    constructor(api: BinaryAPI | null, params?: TTradingTimesParam) {
         this._params = params || {};
         this._shouldFetchTradingTimes = params?.shouldFetchTradingTimes !== false;
-        this._api = api;
+        this._api = api as BinaryAPI;
         this._serverTime = ServerTime.getInstance();
         this._emitter = new EventEmitter({ emitDelay: 0 });
     }
@@ -40,7 +40,7 @@ class TradingTimes {
         }
     }
     async initialize() {
-        await this._serverTime.init(this._api, () => {
+        await this._serverTime.init(this._api || undefined, () => {
             if (typeof this.timeUpdateCallback === 'function') this.timeUpdateCallback();
         });
         if (this.isInitialized) {

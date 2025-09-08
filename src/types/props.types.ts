@@ -4,14 +4,12 @@ import {
     TradingTimesResponse,
     AuditDetailsForExpiredContract,
     ProposalOpenContract,
-    TGetQuotesRequest,
     OHLCStreamResponse,
     TGranularity,
 } from 'src/types/api-types';
 
 import { TActiveDrawingToolItem, TDrawingCreatedConfig } from 'src/store/DrawToolsStore';
 import { HtmlHTMLAttributes } from 'react';
-import { BinaryAPI } from 'src/binaryapi';
 import { ChartTypes } from 'src/Constant';
 import ChartState from 'src/store/ChartState';
 import { TNotification } from 'src/store/Notifier';
@@ -89,7 +87,7 @@ export type TBinaryAPIResponse = {
 
 export type TRequestAPI = (request: TBinaryAPIRequest) => Promise<TBinaryAPIResponse>;
 export type TResponseAPICallback = (response: TQuote) => void;
-export type TUnsubscribeQuotes = (request?: TGetQuotesRequest, callback?: TResponseAPICallback) => void;
+export type TUnsubscribeQuotes = (params: { symbol: string; granularity: TGranularity }) => void;
 export type TGetQuotesResult = {
     candles?: Array<{
         open: number;
@@ -209,10 +207,77 @@ export type TBarrierUpdateProps = {
     key: string;
 };
 
+/**
+ * Props interface for SmartCharts standalone component.
+ * This interface defines all the required and optional props for the chart component.
+ */
 export type TChartProps = {
-    unsubscribeQuotes: BinaryAPI['unsubscribeQuotes'];
-    getQuotes?: TGetQuotes;
-    subscribeQuotes?: TSubscribeQuotes;
+    /**
+     * Function to fetch historical quote data for a given symbol and time range.
+     * This function is REQUIRED and must be implemented by the client.
+     * 
+     * @param params - Parameters for fetching quotes including symbol, granularity, count, etc.
+     * @returns Promise that resolves to historical data in TGetQuotesResult format
+     * 
+     * @example
+     * ```typescript
+     * const getQuotes: TGetQuotes = async (params) => {
+     *   const response = await fetch(`/api/quotes?symbol=${params.symbol}`);
+     *   const data = await response.json();
+     *   return {
+     *     candles: data.candles, // For candlestick data
+     *     history: data.history  // For tick data
+     *   };
+     * };
+     * ```
+     */
+    getQuotes: TGetQuotes;
+
+    /**
+     * Function to subscribe to real-time quote updates for a given symbol.
+     * This function is REQUIRED and must be implemented by the client.
+     * 
+     * @param params - Subscription parameters including symbol and granularity
+     * @param callback - Function to call when new quote data is received
+     * @returns Unsubscribe function to clean up the subscription
+     * 
+     * @example
+     * ```typescript
+     * const subscribeQuotes: TSubscribeQuotes = (params, callback) => {
+     *   const ws = new WebSocket('ws://your-server');
+     *   ws.onmessage = (event) => {
+     *     const quote = JSON.parse(event.data);
+     *     callback(quote);
+     *   };
+     *   return () => ws.close(); // Return cleanup function
+     * };
+     * ```
+     */
+    subscribeQuotes: TSubscribeQuotes;
+
+    /**
+     * Function to unsubscribe from quote updates.
+     * This function is REQUIRED and must handle cleanup of subscriptions.
+     */
+    unsubscribeQuotes: TUnsubscribeQuotes;
+
+    /**
+     * Flag indicating whether the chart should fetch quotes using the getQuotes function.
+     * This is REQUIRED and should typically be set to true for standalone operation.
+     * 
+     * @default true
+     */
+    shouldGetQuotes: boolean;
+
+    /**
+     * Flag indicating whether the connection is opened and data can be fetched.
+     * This is REQUIRED and controls whether the chart attempts to fetch data.
+     * 
+     * @default true
+     */
+    isConnectionOpened: boolean;
+
+    // Optional props (existing functionality preserved)
     id?: string;
     getMarketsOrder?: (active_symbols: ActiveSymbols) => string[];
     getIndicatorHeightRatio?: TGetIndicatorHeightRatio;
@@ -235,7 +300,6 @@ export type TChartProps = {
     enableRouting?: boolean;
     enable?: boolean;
     shouldDrawTicksFromContractInfo?: boolean;
-    isConnectionOpened?: boolean;
     onMessage?: (message: TNotification) => void;
     isAnimationEnabled?: boolean;
     isVerticalScrollEnabled?: boolean;
@@ -243,7 +307,6 @@ export type TChartProps = {
     scrollToEpoch?: number | null;
     clearChart?: () => void;
     shouldFetchTradingTimes?: boolean;
-    shouldGetQuotes?: boolean;
     allowTickChartTypeOnly?: boolean;
     allTicks?: NonNullable<AuditDetailsForExpiredContract>['all_ticks'];
     contractInfo?: ProposalOpenContract;

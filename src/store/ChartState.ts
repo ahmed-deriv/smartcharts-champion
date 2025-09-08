@@ -5,6 +5,8 @@ import {
     TChartProps,
     TGetIndicatorHeightRatio,
     TGetQuotes,
+    TSubscribeQuotes,
+    TUnsubscribeQuotes,
     TGranularity,
     TLayout,
     TSettings,
@@ -84,6 +86,8 @@ class ChartState {
     activeSymbols: string | null = null;
     masterData: string | null = null;
     getQuotes?: TGetQuotes;
+    subscribeQuotes?: TSubscribeQuotes;
+    unsubscribeQuotes?: TUnsubscribeQuotes;
     chartControlsWidgets?: TChartControlsWidgets;
     enabledChartFooter?: boolean;
 
@@ -172,6 +176,9 @@ class ChartState {
         shouldDrawTicksFromContractInfo,
         stateChangeListener,
         getIndicatorHeightRatio,
+        getQuotes,
+        subscribeQuotes,
+        unsubscribeQuotes,
         chartType,
         clearChart,
         endEpoch,
@@ -264,6 +271,11 @@ class ChartState {
         this.contractInfo = contractInfo;
         this.showLastDigitStats = showLastDigitStats;
         this.getIndicatorHeightRatio = getIndicatorHeightRatio;
+        
+        // Store the data function props for Feed to access
+        this.getQuotes = getQuotes;
+        this.subscribeQuotes = subscribeQuotes;
+        this.unsubscribeQuotes = unsubscribeQuotes;
 
         const feed = this.mainStore.chart.feed;
         if (shouldDrawTicksFromContractInfo && feed && contractInfo.tick_stream) {

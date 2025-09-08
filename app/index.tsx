@@ -28,7 +28,6 @@ import {
     TRefData,
     TStateChangeListener,
     ProposalOpenContract,
-    TGetQuotesRequest,
     ActiveSymbols,
 } from 'src/types';
 import 'url-search-params-polyfill';
@@ -208,12 +207,10 @@ const subscribeQuotes = (
 };
 const requestAPI = connectionManager.send.bind(connectionManager);
 
-// Modified unsubscribeQuotes to handle subscription IDs
-const unsubscribeQuotes = (request?: TGetQuotesRequest) => {
-    // Extract symbol and granularity from the request to create the key
-    if (!request?.symbol) return;
-    const { symbol, granularity = 0, ticks_history = '' } = request;
-    const key = `${symbol || ticks_history}-${granularity || 0}`;
+// Modified unsubscribeQuotes to match TUnsubscribeQuotes signature
+const unsubscribeQuotes = (params: { symbol: string; granularity: TGranularity }) => {
+    const { symbol, granularity } = params;
+    const key = `${symbol}-${granularity}`;
 
     // If we have a subscription ID for this key, add it to the request
     if (subscriptionIds[key]) {
@@ -233,20 +230,15 @@ const unsubscribeQuotes = (request?: TGetQuotesRequest) => {
                 console.error('Error forgetting subscription:', error);
             });
     }
+    
+    // Create a request object for streamManager.forget
+    const request = {
+        ticks_history: symbol,
+        granularity: (granularity && granularity > 0) ? granularity : undefined,
+    };
+    
     // Call the streamManager forget method
     streamManager.forget(request);
-
-    // Call the original forget method as a fallback
-    // We need to adapt the callback to match what streamManager.forget expects
-    // streamManager.forget(request, (response: TicksHistoryResponse) => {
-    //     // Create a TQuote object from the TicksHistoryResponse if needed
-    //     // This is a simplified adapter - in a real implementation, you'd need to
-    //     // properly convert from TicksHistoryResponse to TQuote based on your app's logic
-    //     if (response) {
-    //         if(!callback) return;
-    //         callback(response as any);
-    //     }
-    // });
 };
 const App = () => {
     const startingLanguageRef = React.useRef('en');
@@ -488,6 +480,7 @@ const App = () => {
             chartData={{ tradingTimes, activeSymbols }}
             getQuotes={getQuotes}
             subscribeQuotes={subscribeQuotes}
+            shouldGetQuotes
             getIndicatorHeightRatio={(chart_height: number, indicator_count: number) => {
                 const isSmallScreen = chart_height < 780;
                 const denominator = indicator_count >= 5 ? indicator_count : indicator_count + 1;

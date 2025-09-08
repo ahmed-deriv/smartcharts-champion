@@ -35,3 +35,5 @@ chart_app/build/**
 
 *.env
 .env.*
+
+docs/

@@ -3,7 +3,7 @@
 import { action, computed, observable, reaction, makeObservable } from 'mobx';
 import moment from 'moment';
 import MainStore from '.';
-import { BinaryAPI, TradingTimes } from '../binaryapi';
+import { TradingTimes } from '../binaryapi';
 import { TProcessedSymbolItem } from '../types/active-symbols.types';
 import { processSymbols, categorizeActiveSymbols } from '../utils/active-symbols';
 import {
@@ -110,7 +110,6 @@ class ChartStore {
     RANGE_PADDING_PX = 125;
     contextPromise: IPendingPromise<Context, void> | null = PendingPromise<Context, void>();
     rootNode: HTMLElement | null = null;
-    api: BinaryAPI | null = null;
     defaults: TDefaults = {
         granularity: 0,
         chartType: 'line',
@@ -251,9 +250,6 @@ class ChartStore {
         const {
             symbol,
             granularity,
-            unsubscribeQuotes,
-            getQuotes,
-            subscribeQuotes,
             isMobile,
             enableRouting,
             onMessage,
@@ -267,19 +263,11 @@ class ChartStore {
         } = props;
 
         this.feedCall = feedCall || {};
-        this.api = new BinaryAPI(
-            unsubscribeQuotes, 
-            getQuotes || (async () => ({
-                candles: [],
-                echo_req: {},
-            })), 
-            subscribeQuotes || (() => (() => { /* Empty function */ })), 
-        );
         this.currentLanguage = localStorage.getItem('current_chart_lang') ?? settings?.language?.toLowerCase();
         // trading times and active symbols can be reused across multiple charts
         this.tradingTimes =
             ChartStore.tradingTimes ||
-            (ChartStore.tradingTimes = new TradingTimes(this.api, {
+            (ChartStore.tradingTimes = new TradingTimes(null, {
                 enable: this.feedCall.tradingTimes,
                 shouldFetchTradingTimes: this.mainStore.state.shouldFetchTradingTimes,
                 tradingTimes: chartData?.tradingTimes,
@@ -325,7 +313,7 @@ class ChartStore {
         ChartStore.chartCount += 1;
 
         // connect chart to data
-        this.feed = new Feed(this.api, this.mainStore, this.tradingTimes);
+        this.feed = new Feed(this.mainStore, this.tradingTimes);
         this.enableRouting = enableRouting;
         if (this.enableRouting) {
             this.routingStore.handleRouting();

@@ -1,12 +1,13 @@
 /* eslint-disable eqeqeq */
 import EventEmitter from 'event-emitter-es6';
 import { reaction } from 'mobx';
-import { BinaryAPI, TradingTimes } from 'src/binaryapi';
-import { Listener, TError, TGetQuotesResult, TGranularity, TMainStore, TPaginationCallback, TQuote, TGetQuotesRequest, ProposalOpenContract } from 'src/types';
+import { TradingTimes } from 'src/binaryapi';
+import { Listener, TError, TGetQuotesResult, TGranularity, TMainStore, TPaginationCallback, TQuote, TGetQuotesRequest, ProposalOpenContract, TGetQuotes, TSubscribeQuotes, TUnsubscribeQuotes } from 'src/types';
 import { strToDateTime } from 'src/utils/date';
 import { getUTCDate } from '../utils';
 import ServerTime from '../utils/ServerTime';
 import { DelayedSubscription, RealtimeSubscription } from './subscription';
+import { PropsBasedSubscription } from './subscription/PropsBasedSubscription';
 import { TQuoteResponse } from './subscription/Subscription';
 import { QuoteFormatter } from './QuoteFormatter';
 
@@ -19,13 +20,12 @@ type TPaginationParams = {
 };
 
 class Feed {
-    _binaryApi: BinaryAPI;
     _connectionClosedDate?: Date;
     _emitter: EventEmitter;
     _mainStore: TMainStore;
     _serverTime: ServerTime;
     tickQueue: TQuote[] = [];
-    _tradingTimes: TradingTimes;
+    _tradingTimes?: TradingTimes;
     quotes: TQuote[] = [];
 
     static get EVENT_MASTER_DATA_UPDATE() {
@@ -70,15 +70,41 @@ class Feed {
     get paginationLoader() {
         return this._mainStore.paginationLoader;
     }
-    _activeStreams: Record<string, DelayedSubscription | RealtimeSubscription> = {};
+    _activeStreams: Record<string, DelayedSubscription | RealtimeSubscription | PropsBasedSubscription> = {};
     _isConnectionOpened = true;
-    constructor(binaryApi: BinaryAPI, mainStore: TMainStore, tradingTimes: TradingTimes) {
-        this._binaryApi = binaryApi;
+    
+    constructor(mainStore: TMainStore, tradingTimes?: TradingTimes) {
         this._mainStore = mainStore;
         this._serverTime = ServerTime.getInstance();
         this._tradingTimes = tradingTimes;
         reaction(() => mainStore.state.isConnectionOpened, this.onConnectionChanged.bind(this));
         this._emitter = new EventEmitter({ emitDelay: 0 });
+    }
+
+    // Props function getters - access client-provided data functions
+    get getQuotes(): TGetQuotes | undefined {
+        return this._mainStore.state.getQuotes;
+    }
+
+    get subscribeQuotes(): TSubscribeQuotes | undefined {
+        return this._mainStore.state.subscribeQuotes;
+    }
+
+    get unsubscribeQuotes(): TUnsubscribeQuotes | undefined {
+        return this._mainStore.state.unsubscribeQuotes;
+    }
+
+    // Props validation
+    private validateProps(): void {
+        if (!this.getQuotes) {
+            throw new Error('getQuotes function is required for Feed operation. Please provide it as a prop.');
+        }
+        if (!this.subscribeQuotes) {
+            throw new Error('subscribeQuotes function is required for real-time data. Please provide it as a prop.');
+        }
+        if (!this.unsubscribeQuotes) {
+            throw new Error('unsubscribeQuotes function is required for cleanup. Please provide it as a prop.');
+        }
     }
     onRangeChanged = () => {
         // TODO: load the range data
@@ -230,7 +256,7 @@ class Feed {
 
         const symbolName = symbolObject.name;
         this.loader.setState('chart-data');
-        if (this._tradingTimes.isFeedUnavailable(symbol)) {
+        if (this._tradingTimes?.isFeedUnavailable(symbol)) {
             this._mainStore.notifier.notifyFeedUnavailable(symbolName);
             const dataCallback: {
                 error?: string;
@@ -266,23 +292,26 @@ class Feed {
             getQuotesRequest.end = String(end);
             getHistoryOnly = true;
         } else if (validation_error !== 'MarketIsClosed' && validation_error !== 'MarketIsClosedTryVolatility') {
-            let subscription: DelayedSubscription | RealtimeSubscription;
-            const delay = this._tradingTimes.getDelayedMinutes(symbol);
+            // Validate that required props are available
+            this.validateProps();
+            
+            const delay = this._tradingTimes?.getDelayedMinutes(symbol) || 0;
             if (delay > 0) {
                 this._mainStore.notifier.notifyDelayedMarket(symbolName, delay);
-                subscription = new DelayedSubscription(
-                    getQuotesRequest as TGetQuotesRequest,
-                    this._binaryApi,
-                    delay,
-                    this._mainStore
-                );
-            } else {
-                subscription = new RealtimeSubscription(
-                    getQuotesRequest as TGetQuotesRequest,
-                    this._binaryApi,
-                    this._mainStore
-                );
             }
+            
+            const subscription = new PropsBasedSubscription(
+                { symbol, granularity: granularity as TGranularity },
+                this.getQuotes!,
+                this.subscribeQuotes!,
+                this._mainStore,
+                {
+                    isDelayed: delay > 0,
+                    delayMinutes: delay,
+                    pollingInterval: 3000,
+                }
+            );
+            
             try {
                 const { quotes: new_quotes, response } = await subscription.initialFetch();
                 quotes = new_quotes;
@@ -353,10 +382,38 @@ class Feed {
                     quotes = [];
                 }
             } else if (this.shouldGetQuotes || !(this.contractInfo as ProposalOpenContract).tick_stream) {
-                const response = await this._binaryApi.getQuotes(
-                    getQuotesRequest as TGetQuotesRequest
-                );
-                quotes = QuoteFormatter.formatHistory(response);
+                // Use getQuotes prop as fallback for historical data
+                if (this.getQuotes) {
+                    const result = await this.getQuotes({
+                        symbol,
+                        granularity: granularity as number,
+                        count: this.endEpoch ? 1000 : this._mainStore.lastDigitStats.count,
+                        start,
+                        end,
+                    });
+                    
+                    // Extract quotes from the result based on whether it's candles or history
+                    if (result.candles) {
+                        quotes = result.candles.map(candle => ({
+                            Date: getUTCDate(candle.epoch),
+                            Open: candle.open,
+                            High: candle.high,
+                            Low: candle.low,
+                            Close: candle.close,
+                        }));
+                    } else if (result.history) {
+                        const { times = [], prices = [] } = result.history;
+                        quotes = prices.map((price, idx) => ({
+                            Date: getUTCDate(times[idx]),
+                            Close: price,
+                        }));
+                    } else {
+                        quotes = [];
+                    }
+                } else {
+                    console.warn('getQuotes prop not available for historical data fallback');
+                    quotes = [];
+                }
             } else {
                 // Passed all_ticks from Deriv-app store modules.contract_replay.contract_store.contract_info.audit_details.all_ticks
                 // Waits for the flutter chart to unmount previous chart
@@ -420,26 +477,35 @@ class Feed {
         let firstEpoch: number | undefined;
         if (end > startLimit) {
             try {
-                const response = await this._binaryApi.getQuotes({
-                    symbol,
-                    granularity: granularity as TGetQuotesRequest['granularity'],
-                    count: `${count}` as any,
-                    end: String(end),
-                });
-                firstEpoch = Feed.getFirstEpoch(response);
-                if (firstEpoch === undefined || firstEpoch === end) {
-                    callback({ moreAvailable: false, quotes: [] });
-                    this.setHasReachedEndOfData(true);
-                    return;
-                }
-                result.quotes = QuoteFormatter.formatHistory(response);
-                if (firstEpoch <= startLimit) {
-                    callback({ moreAvailable: false, quotes: [] });
-                    this.setHasReachedEndOfData(true);
-                }
+                // Use getQuotes prop for pagination data
+                if (this.getQuotes) {
+                    const response = await this.getQuotes({
+                        symbol,
+                        granularity: granularity as number,
+                        count,
+                        end,
+                    });
+                    
+                    firstEpoch = Feed.getFirstEpoch(response);
+                    if (firstEpoch === undefined || firstEpoch === end) {
+                        callback({ moreAvailable: false, quotes: [] });
+                        this.setHasReachedEndOfData(true);
+                        return;
+                    }
+                    result.quotes = QuoteFormatter.formatHistory(response);
+                    if (firstEpoch <= startLimit) {
+                        callback({ moreAvailable: false, quotes: [] });
+                        this.setHasReachedEndOfData(true);
+                    }
 
-                if (result.quotes?.length && result.quotes.length < count) {
-                    callback({ moreAvailable: false, quotes: result.quotes });
+                    if (result.quotes?.length && result.quotes.length < count) {
+                        callback({ moreAvailable: false, quotes: result.quotes });
+                        this.setHasReachedEndOfData(true);
+                        return;
+                    }
+                } else {
+                    console.warn('getQuotes prop not available for pagination data');
+                    callback({ moreAvailable: false, quotes: [] });
                     this.setHasReachedEndOfData(true);
                     return;
                 }
@@ -474,7 +540,13 @@ class Feed {
         if (!subscription) {
             return;
         }
-        const lastEpoch = subscription.lastStreamEpoch;
+        // Handle different subscription types for lastStreamEpoch
+        let lastEpoch: number | undefined;
+        if (subscription instanceof PropsBasedSubscription) {
+            lastEpoch = (subscription as any).lastStreamEpoch; // PropsBasedSubscription has this property
+        } else {
+            lastEpoch = (subscription as any).lastStreamEpoch; // DelayedSubscription/RealtimeSubscription may have this
+        }
         if (
             this.endEpoch &&
             lastEpoch !== undefined &&
@@ -595,9 +667,10 @@ class Feed {
     }
     _resumeStream(key: string) {
         this._activeStreams[key].pause();
-        this._activeStreams[key].resume().then((params?: TQuoteResponse) => {
-            const { quotes } = params as TQuoteResponse;
-            this._appendChartData(quotes, key);
+        this._activeStreams[key].resume().then((result) => {
+            if (result && result.quotes) {
+                this._appendChartData(result.quotes, key);
+            }
         });
     }
     _getKey({ symbol, granularity }: { symbol: string; granularity: TGranularity }) {
